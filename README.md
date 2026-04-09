@@ -1,6 +1,6 @@
 # updatepatch
 
-Mutate objects in place while recording undo/redo patches.
+Undo/redo for any mutable state. Works with plain objects, classes, arrays, Maps, and Sets — no immutability required.
 
 ```ts
 import { updateWithUndo, applyPatches } from "updatepatch";
