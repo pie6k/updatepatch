@@ -22,11 +22,7 @@ jobs:
 
       - run: yarn lint
 
-      - run: yarn test --coverage
-
-      - uses: codecov/codecov-action@v5
-        with:
-          files: coverage/coverage-final.json
+      - run: yarn test
 
       - run: yarn build
 
