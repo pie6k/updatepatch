@@ -1,7 +1,7 @@
 {
   "name": "updatepatch",
   "version": "1.0.0",
-  "description": "Mutate objects in-place with undo/redo patch tracking",
+  "description": "Mutate objects in place while recording undo/redo patches. Supports classes, Maps, Sets, arrays, nested objects, and auto-accessors.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -22,6 +22,30 @@
     "dist"
   ],
   "sideEffects": false,
+  "keywords": [
+    "undo",
+    "redo",
+    "patch",
+    "undo-redo",
+    "json-patch",
+    "immer",
+    "proxy",
+    "mutation",
+    "state",
+    "history",
+    "map",
+    "set",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pie6k/updatepatch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pie6k/updatepatch/issues"
+  },
+  "homepage": "https://github.com/pie6k/updatepatch#readme",
+  "author": "pie6k",
   "scripts": {
     "build": "vite build && cp dist/index.d.ts dist/index.d.cts",
     "test": "jest --config jest.config.cjs",
