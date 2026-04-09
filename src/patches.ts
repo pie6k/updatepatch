@@ -1,72 +1,64 @@
 import { Patch } from "./types";
 
 /**
- * Apply a list of patches to a target object, mutating it in place.
- * Supports plain objects, arrays, Maps, and Sets.
+ * Apply a list of patches, mutating each patch's target in place.
+ * Returns `root` for chaining.
  */
-export function applyPatches<T extends object>(target: T, patches: Patch[]): T {
+export function applyPatches<T extends object>(root: T, patches: Patch[]): T {
   for (const patch of patches) {
-    applyPatch(target, patch);
+    applyPatch(patch);
   }
-  return target;
+  return root;
 }
 
-function applyPatch(root: object, patch: Patch): void {
-  const { op, path, value } = patch;
+function applyPatch(patch: Patch): void {
+  const { op, target, path, value } = patch;
 
-  if (path.length === 0) {
-    throw new Error("Cannot apply patch with empty path");
-  }
-
-  const parent = resolvePath(root, path.slice(0, -1));
-  const key = path[path.length - 1];
-
-  if (parent instanceof Map) {
+  if (target instanceof Map) {
     switch (op) {
       case "add":
       case "replace":
-        parent.set(key, value);
+        target.set(path, value);
         break;
       case "remove":
-        parent.delete(key);
+        target.delete(path);
         break;
     }
     return;
   }
 
-  if (parent instanceof Set) {
-    const index = key as number;
+  if (target instanceof Set) {
+    const index = path as number;
     switch (op) {
       case "add": {
-        // Insert value at the given index position
-        const items = Array.from(parent);
-        parent.clear();
+        const items = Array.from(target);
+        target.clear();
         items.splice(index, 0, value);
-        for (const item of items) parent.add(item);
+        for (const item of items) target.add(item);
         break;
       }
       case "remove": {
-        const items = Array.from(parent);
+        const items = Array.from(target);
         const removed = items[index];
-        parent.delete(removed);
+        target.delete(removed);
         break;
       }
     }
     return;
   }
 
-  if (Array.isArray(parent)) {
-    const numKey = typeof key === "number" ? key : Number(key);
+  if (Array.isArray(target)) {
+    const numKey = typeof path === "number" ? path : Number(path);
     if (Number.isInteger(numKey) && numKey >= 0) {
       switch (op) {
         case "add":
-          parent.splice(numKey, 0, value);
+          target.splice(numKey, 0, value);
           break;
         case "remove":
-          parent.splice(numKey, 1);
+          target.splice(numKey, 1);
           break;
         case "replace":
-          parent[numKey] = value;
+          target[numKey] = value;
           break;
       }
       return;
@@ -78,31 +70,10 @@ function applyPatch(root: object, patch: Patch): void {
   switch (op) {
     case "add":
     case "replace":
-      (parent as any)[key] = value;
+      (target as any)[path] = value;
       break;
     case "remove":
-      delete (parent as any)[key];
+      delete (target as any)[path];
       break;
   }
-}
-
-function resolvePath(root: object, segments: (string | number)[]): unknown {
-  let current: any = root;
-  for (const seg of segments) {
-    if (current instanceof Map) {
-      current = current.get(seg);
-    } else if (current instanceof Set) {
-      const index = typeof seg === "number" ? seg : Number(seg);
-      const set: Set<unknown> = current;
-      current = undefined;
-      let i = 0;
-      for (const item of set) {
-        if (i === index) { current = item; break; }
-        i++;
-      }
-    } else {
-      current = current[seg];
-    }
-  }
-  return current;
 }

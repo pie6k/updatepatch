@@ -1,6 +1,7 @@
 export interface Patch {
   op: "replace" | "remove" | "add";
-  path: (string | number)[];
+  target: object;
+  path: string | number;
   value?: any;
 }
 

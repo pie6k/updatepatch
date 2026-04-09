@@ -44,7 +44,7 @@ state.name; // "Bob"
 state.tags; // ["admin", "editor"]
 ```
 
-This works with any object type — classes, nested objects, Maps, Sets, arrays. The patches are plain JSON-serializable data, so you can store them, send them over the wire, or build a full undo history stack on top of them.
+This works with any object type — classes, nested objects, Maps, Sets, arrays. Each patch holds a direct reference to the mutated object and a single property key, so applying them requires no path resolution.
 
 No copies of your objects are ever made. All original references are preserved — if you undo the removal of an item from an array, the restored item is the exact same object (`===`), not a clone.
 
@@ -104,17 +104,23 @@ Applies patches to `target` in place. Returns `target` for chaining.
 ```ts
 interface Patch {
   op: "replace" | "remove" | "add";
-  path: (string | number)[];
+  target: object;
+  path: string | number;
   value?: any;
 }
 ```
 
-`path` is an array of keys from root to target property. Array indices are numbers, object/Map keys are strings.
+Each patch holds a direct reference to the object being mutated (`target`) and a single property key (`path`). No path arrays, no resolution — patches apply directly.
 
 ```ts
-{ op: "replace", path: ["player", "hp"], value: 50 }   // draft.player.hp = 50
-{ op: "add",     path: ["items", 2],     value: "sword" } // draft.items.push("sword")
-{ op: "remove",  path: ["tempData"] }                   // delete draft.tempData
+// draft.player.hp = 50
+{ op: "replace", target: state.player, path: "hp", value: 50 }
+
+// draft.items.push("sword")
+{ op: "add", target: state.items, path: 2, value: "sword" }
+
+// delete draft.tempData
+{ op: "remove", target: state, path: "tempData" }
 ```
 
 ### `Recipe<T>`

@@ -378,23 +378,24 @@ describe("Set operations", () => {
 // ---------------------------------------------------------------------------
 
 describe("patch format", () => {
-  test("patches follow the immer Patch interface", () => {
+  test("patch has target and single-key path", () => {
     const obj = { a: 1 };
     const [undo, redo] = updateWithUndo(obj, (draft) => {
       draft.a = 2;
     });
 
-    expect(undo).toEqual([{ op: "replace", path: ["a"], value: 1 }]);
-    expect(redo).toEqual([{ op: "replace", path: ["a"], value: 2 }]);
+    expect(undo).toEqual([{ op: "replace", target: obj, path: "a", value: 1 }]);
+    expect(redo).toEqual([{ op: "replace", target: obj, path: "a", value: 2 }]);
   });
 
-  test("nested path segments are correct", () => {
+  test("nested mutation targets the inner object directly", () => {
     const obj = { a: { b: { c: 0 } } };
     const [_undo, redo] = updateWithUndo(obj, (draft) => {
       draft.a.b.c = 1;
     });
 
-    expect(redo[0].path).toEqual(["a", "b", "c"]);
+    expect(redo[0].target).toBe(obj.a.b);
+    expect(redo[0].path).toBe("c");
   });
 
   test("array index paths are numbers", () => {
@@ -403,8 +404,9 @@ describe("patch format", () => {
       draft.arr[0] = 99;
     });
 
-    expect(redo[0].path).toEqual(["arr", 0]);
-    expect(typeof redo[0].path[1]).toBe("number");
+    expect(redo[0].target).toBe(obj.arr);
+    expect(redo[0].path).toBe(0);
+    expect(typeof redo[0].path).toBe("number");
   });
 });
 
@@ -1336,14 +1338,70 @@ describe("Set proxy: has, keys, entries", () => {
   });
 });
 
+
 // ---------------------------------------------------------------------------
-// Coverage: applyPatches error
+// Null-prototype objects (Object.create(null))
 // ---------------------------------------------------------------------------
 
-describe("applyPatches edge cases", () => {
-  test("throws on empty path", () => {
-    expect(() => {
-      applyPatches({}, [{ op: "replace", path: [], value: 1 }]);
-    }).toThrow("Cannot apply patch with empty path");
+describe("Object.create(null)", () => {
+  test("mutate top-level null-prototype object", () => {
+    const obj = Object.create(null) as Record<string, any>;
+    obj.x = 1;
+    obj.y = 2;
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      draft.x = 10;
+      draft.y = 20;
+    });
+
+    expect(obj.x).toBe(10);
+    expect(obj.y).toBe(20);
+
+    applyPatches(obj, undo);
+    expect(obj.x).toBe(1);
+    expect(obj.y).toBe(2);
+
+    applyPatches(obj, redo);
+    expect(obj.x).toBe(10);
+    expect(obj.y).toBe(20);
+  });
+
+  test("nested null-prototype object", () => {
+    const inner = Object.create(null) as Record<string, any>;
+    inner.val = "hello";
+    const obj = { nested: inner };
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      draft.nested.val = "world";
+    });
+
+    expect(inner.val).toBe("world");
+
+    applyPatches(obj, undo);
+    expect(inner.val).toBe("hello");
+
+    applyPatches(obj, redo);
+    expect(inner.val).toBe("world");
+  });
+
+  test("add and delete properties on null-prototype object", () => {
+    const obj = Object.create(null) as Record<string, any>;
+    obj.keep = true;
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      draft.added = "new";
+      delete draft.keep;
+    });
+
+    expect(obj.added).toBe("new");
+    expect("keep" in obj).toBe(false);
+
+    applyPatches(obj, undo);
+    expect("added" in obj).toBe(false);
+    expect(obj.keep).toBe(true);
+
+    applyPatches(obj, redo);
+    expect(obj.added).toBe("new");
+    expect("keep" in obj).toBe(false);
   });
 });

@@ -18,7 +18,7 @@ export function updateWithUndo<T extends object>(
     proxies: new WeakMap(),
   };
 
-  const draft = createRecordingProxy(target, [], ctx);
+  const draft = createRecordingProxy(target, ctx);
   recipe(draft);
 
   // Undo patches should be applied in reverse order

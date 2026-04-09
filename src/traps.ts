@@ -4,22 +4,8 @@ import { Patch } from "./types";
 // Accessor cache
 // ---------------------------------------------------------------------------
 
-/**
- * Cache for prototype-chain accessor lookups, keyed by prototype.
- * All instances of the same class share the prototype, so a single
- * lookup per (prototype, prop) pair is enough.
- */
 const accessorCache = new WeakMap<object, Map<string | symbol, boolean>>();
 
-/**
- * Check if `prop` is backed by a getter/setter on the prototype chain
- * (e.g. the `accessor` keyword, which compiles to a WeakMap-backed private
- * field). When true, `Reflect.get/set` must receive the real target as
- * `this` — not the proxy — or the private-field access will throw.
- *
- * Results are cached per prototype so the chain is walked at most once
- * per (class, property) pair.
- */
 function hasAccessor(target: object, prop: string | symbol): boolean {
   const proto = Object.getPrototypeOf(target);
   if (!proto || proto === Object.prototype) return false;
@@ -59,28 +45,28 @@ export interface RecorderContext {
 }
 
 /**
- * Wrap `target` in a recording proxy rooted at `basePath`.
+ * Wrap `target` in a recording proxy.
  * Reads pass through (returning nested proxies for objects).
  * Writes mutate the real target AND record undo/redo patches.
  *
- * Patch values always store original references — never copies.
+ * Each patch stores a direct reference to the mutated object (`target`)
+ * and a single key (`path`), so no path arrays are allocated.
  */
 export function createRecordingProxy<T extends object>(
   target: T,
-  basePath: (string | number)[],
   ctx: RecorderContext,
 ): T {
   const existing = ctx.proxies.get(target);
   if (existing) return existing as T;
 
   if (target instanceof Map) {
-    return createMapProxy(target, basePath, ctx) as unknown as T;
+    return createMapProxy(target, ctx) as unknown as T;
   }
   if (target instanceof Set) {
-    return createSetProxy(target, basePath, ctx) as unknown as T;
+    return createSetProxy(target, ctx) as unknown as T;
   }
   if (Array.isArray(target)) {
-    return createArrayProxy(target, basePath, ctx) as unknown as T;
+    return createArrayProxy(target, ctx) as unknown as T;
   }
 
   const proxy = new Proxy(target, {
@@ -89,14 +75,11 @@ export function createRecordingProxy<T extends object>(
         return Reflect.get(_target, prop, receiver);
       }
 
-      // Accessor properties (e.g. `accessor` keyword) use private fields
-      // that only exist on the real target, not on the proxy.
       const thisArg = hasAccessor(_target, prop) ? _target : receiver;
       const value = Reflect.get(_target, prop, thisArg);
 
       if (value !== null && typeof value === "object") {
-        const childPath = [...basePath, String(prop)];
-        return createRecordingProxy(value as object, childPath, ctx);
+        return createRecordingProxy(value as object, ctx);
       }
 
       return value;
@@ -115,13 +98,13 @@ export function createRecordingProxy<T extends object>(
 
       Reflect.set(_target, prop, newValue, thisArg);
 
-      const path = [...basePath, String(prop)];
+      const key = String(prop);
       if (had) {
-        ctx.undoPatches.push({ op: "replace", path, value: oldValue });
-        ctx.redoPatches.push({ op: "replace", path, value: newValue });
+        ctx.undoPatches.push({ op: "replace", target: _target, path: key, value: oldValue });
+        ctx.redoPatches.push({ op: "replace", target: _target, path: key, value: newValue });
       } else {
-        ctx.undoPatches.push({ op: "remove", path });
-        ctx.redoPatches.push({ op: "add", path, value: newValue });
+        ctx.undoPatches.push({ op: "remove", target: _target, path: key });
+        ctx.redoPatches.push({ op: "add", target: _target, path: key, value: newValue });
       }
 
       return true;
@@ -132,13 +115,13 @@ export function createRecordingProxy<T extends object>(
         return Reflect.deleteProperty(_target, prop);
       }
 
-      const path = [...basePath, String(prop)];
+      const key = String(prop);
       const oldValue = (_target as any)[prop];
 
       Reflect.deleteProperty(_target, prop);
 
-      ctx.undoPatches.push({ op: "add", path, value: oldValue });
-      ctx.redoPatches.push({ op: "remove", path });
+      ctx.undoPatches.push({ op: "add", target: _target, path: key, value: oldValue });
+      ctx.redoPatches.push({ op: "remove", target: _target, path: key });
 
       return true;
     },
@@ -149,21 +132,14 @@ export function createRecordingProxy<T extends object>(
 }
 
 // ---------------------------------------------------------------------------
-// Array proxy — intercepts mutating methods to generate clean patches
+// Array proxy
 // ---------------------------------------------------------------------------
 
 function createArrayProxy<T>(
   target: T[],
-  basePath: (string | number)[],
   ctx: RecorderContext,
 ): T[] {
-  // When true, set/deleteProperty traps pass through without recording.
-  // Used while an intercepted method is running its internal operations.
   let suppressTraps = false;
-
-  // Pre-created method interceptors — avoids allocating closures on
-  // every property access.  `proxy` is assigned after construction
-  // but always before any method can be called.
   let proxy: T[];
 
   const methods: Record<string, Function> = {
@@ -174,9 +150,8 @@ function createArrayProxy<T>(
       suppressTraps = false;
 
       for (let i = 0; i < items.length; i++) {
-        const path = [...basePath, startIndex + i];
-        ctx.undoPatches.push({ op: "remove", path });
-        ctx.redoPatches.push({ op: "add", path, value: items[i] });
+        ctx.undoPatches.push({ op: "remove", target, path: startIndex + i });
+        ctx.redoPatches.push({ op: "add", target, path: startIndex + i, value: items[i] });
       }
       return result;
     },
@@ -189,9 +164,8 @@ function createArrayProxy<T>(
       target.pop();
       suppressTraps = false;
 
-      const path = [...basePath, index];
-      ctx.undoPatches.push({ op: "add", path, value: removed });
-      ctx.redoPatches.push({ op: "remove", path });
+      ctx.undoPatches.push({ op: "add", target, path: index, value: removed });
+      ctx.redoPatches.push({ op: "remove", target, path: index });
       return removed;
     },
 
@@ -202,9 +176,8 @@ function createArrayProxy<T>(
       target.shift();
       suppressTraps = false;
 
-      const path = [...basePath, 0];
-      ctx.undoPatches.push({ op: "add", path, value: removed });
-      ctx.redoPatches.push({ op: "remove", path });
+      ctx.undoPatches.push({ op: "add", target, path: 0, value: removed });
+      ctx.redoPatches.push({ op: "remove", target, path: 0 });
       return removed;
     },
 
@@ -214,12 +187,8 @@ function createArrayProxy<T>(
       suppressTraps = false;
 
       for (let i = 0; i < items.length; i++) {
-        ctx.undoPatches.push({ op: "remove", path: [...basePath, 0] });
-        ctx.redoPatches.push({
-          op: "add",
-          path: [...basePath, i],
-          value: items[i],
-        });
+        ctx.undoPatches.push({ op: "remove", target, path: 0 });
+        ctx.redoPatches.push({ op: "add", target, path: i, value: items[i] });
       }
       return result;
     },
@@ -242,35 +211,28 @@ function createArrayProxy<T>(
       const removed = target.splice(actualStart, actualDeleteCount, ...items);
       suppressTraps = false;
 
-      // Undo: recorded so that after global reversal the application
-      // order is: remove inserted items back-to-front, then re-add
-      // removed items front-to-back.
+      // Undo: after global reversal → remove inserted back-to-front,
+      // then re-add removed front-to-back.
       for (let i = removedRefs.length - 1; i >= 0; i--) {
         ctx.undoPatches.push({
-          op: "add",
-          path: [...basePath, actualStart + i],
-          value: removedRefs[i],
+          op: "add", target, path: actualStart + i, value: removedRefs[i],
         });
       }
       for (let i = 0; i < items.length; i++) {
         ctx.undoPatches.push({
-          op: "remove",
-          path: [...basePath, actualStart + i],
+          op: "remove", target, path: actualStart + i,
         });
       }
 
       // Redo: remove old back-to-front, add new front-to-back
       for (let i = actualDeleteCount - 1; i >= 0; i--) {
         ctx.redoPatches.push({
-          op: "remove",
-          path: [...basePath, actualStart + i],
+          op: "remove", target, path: actualStart + i,
         });
       }
       for (let i = 0; i < items.length; i++) {
         ctx.redoPatches.push({
-          op: "add",
-          path: [...basePath, actualStart + i],
-          value: items[i],
+          op: "add", target, path: actualStart + i, value: items[i],
         });
       }
 
@@ -285,9 +247,8 @@ function createArrayProxy<T>(
 
       for (let i = 0; i < target.length; i++) {
         if (before[i] !== target[i]) {
-          const path = [...basePath, i];
-          ctx.undoPatches.push({ op: "replace", path, value: before[i] });
-          ctx.redoPatches.push({ op: "replace", path, value: target[i] });
+          ctx.undoPatches.push({ op: "replace", target, path: i, value: before[i] });
+          ctx.redoPatches.push({ op: "replace", target, path: i, value: target[i] });
         }
       }
       return proxy;
@@ -301,16 +262,14 @@ function createArrayProxy<T>(
 
       for (let i = 0; i < target.length; i++) {
         if (before[i] !== target[i]) {
-          const path = [...basePath, i];
-          ctx.undoPatches.push({ op: "replace", path, value: before[i] });
-          ctx.redoPatches.push({ op: "replace", path, value: target[i] });
+          ctx.undoPatches.push({ op: "replace", target, path: i, value: before[i] });
+          ctx.redoPatches.push({ op: "replace", target, path: i, value: target[i] });
         }
       }
       return proxy;
     },
   };
 
-  // Cache for bound non-mutating methods (filter, map, indexOf, …)
   const boundMethods = new Map<string, Function>();
 
   proxy = new Proxy(target, {
@@ -332,8 +291,7 @@ function createArrayProxy<T>(
       }
 
       if (value !== null && typeof value === "object") {
-        const childPath = [...basePath, toPathSegment(_target, prop)];
-        return createRecordingProxy(value as object, childPath, ctx);
+        return createRecordingProxy(value as object, ctx);
       }
 
       return value;
@@ -350,9 +308,8 @@ function createArrayProxy<T>(
         if (newLength < oldLength) {
           for (let i = oldLength - 1; i >= newLength; i--) {
             if (i in _target) {
-              const path = [...basePath, i];
-              ctx.undoPatches.push({ op: "add", path, value: _target[i] });
-              ctx.redoPatches.push({ op: "remove", path });
+              ctx.undoPatches.push({ op: "add", target: _target, path: i, value: _target[i] });
+              ctx.redoPatches.push({ op: "remove", target: _target, path: i });
             }
           }
         }
@@ -360,6 +317,7 @@ function createArrayProxy<T>(
         return true;
       }
 
+      const segment = toPathSegment(_target, prop);
       const had = Reflect.has(_target, prop);
       const oldValue = Reflect.get(_target, prop, receiver);
 
@@ -367,14 +325,12 @@ function createArrayProxy<T>(
 
       Reflect.set(_target, prop, newValue, receiver);
 
-      const segment = toPathSegment(_target, prop);
-      const path = [...basePath, segment];
       if (had) {
-        ctx.undoPatches.push({ op: "replace", path, value: oldValue });
-        ctx.redoPatches.push({ op: "replace", path, value: newValue });
+        ctx.undoPatches.push({ op: "replace", target: _target, path: segment, value: oldValue });
+        ctx.redoPatches.push({ op: "replace", target: _target, path: segment, value: newValue });
       } else {
-        ctx.undoPatches.push({ op: "remove", path });
-        ctx.redoPatches.push({ op: "add", path, value: newValue });
+        ctx.undoPatches.push({ op: "remove", target: _target, path: segment });
+        ctx.redoPatches.push({ op: "add", target: _target, path: segment, value: newValue });
       }
 
       return true;
@@ -386,13 +342,12 @@ function createArrayProxy<T>(
       }
 
       const segment = toPathSegment(_target, prop);
-      const path = [...basePath, segment];
       const oldValue = (_target as any)[prop];
 
       Reflect.deleteProperty(_target, prop);
 
-      ctx.undoPatches.push({ op: "add", path, value: oldValue });
-      ctx.redoPatches.push({ op: "remove", path });
+      ctx.undoPatches.push({ op: "add", target: _target, path: segment, value: oldValue });
+      ctx.redoPatches.push({ op: "remove", target: _target, path: segment });
 
       return true;
     },
@@ -406,14 +361,12 @@ function createArrayProxy<T>(
 // Helpers for wrapping iteration values in recording proxies
 // ---------------------------------------------------------------------------
 
-/** If `value` is an object, wrap it in a recording proxy at `path`. */
 function proxyValue<V>(
   value: V,
-  path: (string | number)[],
   ctx: RecorderContext,
 ): V {
   if (value !== null && typeof value === "object") {
-    return createRecordingProxy(value as object, path, ctx) as unknown as V;
+    return createRecordingProxy(value as object, ctx) as unknown as V;
   }
   return value;
 }
@@ -424,16 +377,10 @@ function proxyValue<V>(
 
 function createMapProxy<K, V>(
   target: Map<K, V>,
-  basePath: (string | number)[],
   ctx: RecorderContext,
 ): Map<K, V> {
-  /** Derive the child path for a given map key. */
-  const childPath = (key: K) => [...basePath, String(key)];
-
-  // ----- Mutating interceptors -----
-
   const getMethod = (k: K) => {
-    return proxyValue(target.get(k) as V, childPath(k), ctx);
+    return proxyValue(target.get(k) as V, ctx);
   };
 
   const setMethod = (key: K, value: V): Map<K, V> => {
@@ -444,13 +391,13 @@ function createMapProxy<K, V>(
 
     target.set(key, value);
 
-    const path = childPath(key);
+    const p = String(key);
     if (had) {
-      ctx.undoPatches.push({ op: "replace", path, value: oldValue });
-      ctx.redoPatches.push({ op: "replace", path, value: value });
+      ctx.undoPatches.push({ op: "replace", target, path: p, value: oldValue });
+      ctx.redoPatches.push({ op: "replace", target, path: p, value: value });
     } else {
-      ctx.undoPatches.push({ op: "remove", path });
-      ctx.redoPatches.push({ op: "add", path, value: value });
+      ctx.undoPatches.push({ op: "remove", target, path: p });
+      ctx.redoPatches.push({ op: "add", target, path: p, value: value });
     }
 
     return mapProxy;
@@ -459,13 +406,13 @@ function createMapProxy<K, V>(
   const deleteMethod = (key: K): boolean => {
     if (!target.has(key)) return false;
 
-    const path = childPath(key);
+    const p = String(key);
     const oldValue = target.get(key);
 
     target.delete(key);
 
-    ctx.undoPatches.push({ op: "add", path, value: oldValue });
-    ctx.redoPatches.push({ op: "remove", path });
+    ctx.undoPatches.push({ op: "add", target, path: p, value: oldValue });
+    ctx.redoPatches.push({ op: "remove", target, path: p });
 
     return true;
   };
@@ -475,31 +422,29 @@ function createMapProxy<K, V>(
     target.clear();
 
     for (const [key, value] of entries) {
-      const path = childPath(key);
-      ctx.undoPatches.push({ op: "add", path, value: value });
-      ctx.redoPatches.push({ op: "remove", path });
+      const p = String(key);
+      ctx.undoPatches.push({ op: "add", target, path: p, value: value });
+      ctx.redoPatches.push({ op: "remove", target, path: p });
     }
   };
-
-  // ----- Iteration — yields proxied values so nested mutations are tracked -----
 
   const forEachMethod = (
     cb: (value: V, key: K, map: Map<K, V>) => void,
   ) => {
     target.forEach((value, key) => {
-      cb(proxyValue(value, childPath(key), ctx), key, mapProxy);
+      cb(proxyValue(value, ctx), key, mapProxy);
     });
   };
 
   function* proxiedValues(): IterableIterator<V> {
-    for (const [key, value] of target) {
-      yield proxyValue(value, childPath(key), ctx);
+    for (const [_key, value] of target) {
+      yield proxyValue(value, ctx);
     }
   }
 
   function* proxiedEntries(): IterableIterator<[K, V]> {
     for (const [key, value] of target) {
-      yield [key, proxyValue(value, childPath(key), ctx)];
+      yield [key, proxyValue(value, ctx)];
     }
   }
 
@@ -510,8 +455,6 @@ function createMapProxy<K, V>(
     get(_target, prop) {
       if (prop === "size") return target.size;
       if (prop === Symbol.toStringTag) return "Map";
-
-      // Iterator / entries return proxied values
       if (prop === Symbol.iterator) return () => proxiedEntries();
 
       switch (prop) {
@@ -538,7 +481,6 @@ function createMapProxy<K, V>(
 // Set proxy
 // ---------------------------------------------------------------------------
 
-/** Find the iteration index of `value` in `set` without allocating an array. */
 function setIndexOf<V>(set: Set<V>, value: V): number {
   let i = 0;
   for (const item of set) {
@@ -550,19 +492,16 @@ function setIndexOf<V>(set: Set<V>, value: V): number {
 
 function createSetProxy<V>(
   target: Set<V>,
-  basePath: (string | number)[],
   ctx: RecorderContext,
 ): Set<V> {
-  // ----- Mutating interceptors -----
-
   const addMethod = (value: V): Set<V> => {
     if (target.has(value)) return setProxy;
 
-    const path = [...basePath, target.size];
+    const index = target.size;
     target.add(value);
 
-    ctx.undoPatches.push({ op: "remove", path });
-    ctx.redoPatches.push({ op: "add", path, value: value });
+    ctx.undoPatches.push({ op: "remove", target, path: index });
+    ctx.redoPatches.push({ op: "add", target, path: index, value: value });
 
     return setProxy;
   };
@@ -571,12 +510,10 @@ function createSetProxy<V>(
     if (!target.has(value)) return false;
 
     const index = setIndexOf(target, value);
-    const path = [...basePath, index];
-
     target.delete(value);
 
-    ctx.undoPatches.push({ op: "add", path, value: value });
-    ctx.redoPatches.push({ op: "remove", path });
+    ctx.undoPatches.push({ op: "add", target, path: index, value: value });
+    ctx.redoPatches.push({ op: "remove", target, path: index });
 
     return true;
   };
@@ -585,41 +522,31 @@ function createSetProxy<V>(
     const items = Array.from(target);
     target.clear();
 
-    // Record in reverse so global reversal yields front-to-back restore
     for (let i = items.length - 1; i >= 0; i--) {
-      const path = [...basePath, i];
-      ctx.undoPatches.push({ op: "add", path, value: items[i] });
-      ctx.redoPatches.push({ op: "remove", path });
+      ctx.undoPatches.push({ op: "add", target, path: i, value: items[i] });
+      ctx.redoPatches.push({ op: "remove", target, path: i });
     }
   };
 
-  // ----- Iteration — yields proxied values so nested mutations are tracked -----
-
   function* proxiedValues(): IterableIterator<V> {
-    let i = 0;
     for (const value of target) {
-      yield proxyValue(value, [...basePath, i], ctx);
-      i++;
+      yield proxyValue(value, ctx);
     }
   }
 
   function* proxiedEntries(): IterableIterator<[V, V]> {
-    let i = 0;
     for (const value of target) {
-      const p = proxyValue(value, [...basePath, i], ctx);
+      const p = proxyValue(value, ctx);
       yield [p, p];
-      i++;
     }
   }
 
   const forEachMethod = (
     cb: (value: V, value2: V, set: Set<V>) => void,
   ) => {
-    let i = 0;
     target.forEach((value) => {
-      const p = proxyValue(value, [...basePath, i], ctx);
+      const p = proxyValue(value, ctx);
       cb(p, p, setProxy);
-      i++;
     });
   };
 
@@ -629,7 +556,6 @@ function createSetProxy<V>(
     get(_target, prop) {
       if (prop === "size") return target.size;
       if (prop === Symbol.toStringTag) return "Set";
-
       if (prop === Symbol.iterator) return () => proxiedValues();
 
       switch (prop) {
