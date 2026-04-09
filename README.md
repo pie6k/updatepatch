@@ -48,16 +48,6 @@ This works with any object type — classes, nested objects, Maps, Sets, arrays.
 
 No copies of your objects are ever made. All original references are preserved — if you undo the removal of an item from an array, the restored item is the exact same object (`===`), not a clone.
 
-## Why
-
-Undo/redo typically requires either immutable state (snapshots, structural sharing) or manual inverse operations. Both get complex when your state involves class instances, Maps, Sets, or deep nesting.
-
-`updatepatch` takes a different approach — mutations happen directly on your objects through a recording proxy. The proxy captures what changed and produces patches that can reverse or replay the operation. The objects themselves stay as-is: same classes, same prototypes, same references.
-
-- **Mutate in place.** No immutable copies or frozen state trees. Your objects remain your objects.
-- **Patches are data.** Undo and redo are `Patch[]` arrays — store them, serialize them, send them over the wire.
-- **References are preserved.** Undo restores the exact same object references, not deep clones.
-
 ## Install
 
 ```bash
