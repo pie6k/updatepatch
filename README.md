@@ -2,22 +2,45 @@
 
 Undo/redo for any mutable state. Works with plain objects, classes, arrays, Maps, and Sets — no immutability required.
 
+## Quick start
+
+Call `updateWithUndo` with any object and a callback. Inside the callback, `draft` behaves exactly like the original object — you can read properties, call methods, iterate, do conditional logic, anything you'd normally do. The only difference is that every mutation is silently recorded so it can later produce undo/redo patches.
+
 ```ts
 import { updateWithUndo, applyPatches } from "updatepatch";
 
-const state = { name: "Alice", tags: ["admin"] };
+const state = { name: "Alice", tags: ["admin"], score: 5 };
 
 const [undo, redo] = updateWithUndo(state, (draft) => {
-  draft.name = "Bob";
-  draft.tags.push("editor");
+  if (draft.score > 3) {
+    draft.name = "Bob";
+    draft.tags.push("editor");
+  }
 });
+```
 
+After the callback runs, `state` is mutated:
+
+```ts
 state.name; // "Bob"
 state.tags; // ["admin", "editor"]
-
-applyPatches(state, undo); // → { name: "Alice", tags: ["admin"] }
-applyPatches(state, redo); // → { name: "Bob", tags: ["admin", "editor"] }
 ```
+
+The returned `undo` and `redo` are arrays of patches. Apply `undo` to reverse everything that just happened, and `redo` to replay it:
+
+```ts
+applyPatches(state, undo);
+state.name; // "Alice"
+state.tags; // ["admin"]
+
+applyPatches(state, redo);
+state.name; // "Bob"
+state.tags; // ["admin", "editor"]
+```
+
+This works with any object type — classes, nested objects, Maps, Sets, arrays. The patches are plain JSON-serializable data, so you can store them, send them over the wire, or build a full undo history stack on top of them.
+
+No copies of your objects are ever made. All original references are preserved — if you undo the removal of an item from an array, the restored item is the exact same object (`===`), not a clone.
 
 ## Why
 
