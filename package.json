@@ -1,6 +1,6 @@
 {
   "name": "updatepatch",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Mutate objects in place while recording undo/redo patches. Supports classes, Maps, Sets, arrays, nested objects, and auto-accessors.",
   "type": "module",
   "main": "./dist/index.cjs",
