@@ -5,6 +5,7 @@
 [![bundle size](https://img.shields.io/bundlephobia/minzip/updatepatch)](https://bundlephobia.com/package/updatepatch)
 [![license](https://img.shields.io/npm/l/updatepatch)](./LICENSE)
 [![CI](https://github.com/pie6k/updatepatch/actions/workflows/ci.yml/badge.svg)](https://github.com/pie6k/updatepatch/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/pie6k/updatepatch/branch/main/graph/badge.svg)](https://codecov.io/gh/pie6k/updatepatch)
 
 Undo/redo for any mutable state. Works with plain objects, classes, arrays, Maps, and Sets — no immutability required.
 
