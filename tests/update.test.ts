@@ -1062,3 +1062,288 @@ describe("Map iteration with nested mutations", () => {
     expect(obj.m.get("q")!.flag).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Coverage: array shift, sort, reverse
+// ---------------------------------------------------------------------------
+
+describe("array shift, sort, reverse", () => {
+  test("shift removes first element with undo/redo", () => {
+    const obj = { arr: ["a", "b", "c"] };
+    let shifted: string | undefined;
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      shifted = draft.arr.shift();
+    });
+
+    expect(shifted).toBe("a");
+    expect(obj.arr).toEqual(["b", "c"]);
+
+    applyPatches(obj, undo);
+    expect(obj.arr).toEqual(["a", "b", "c"]);
+
+    applyPatches(obj, redo);
+    expect(obj.arr).toEqual(["b", "c"]);
+  });
+
+  test("shift on empty array returns undefined", () => {
+    const obj = { arr: [] as string[] };
+    let shifted: string | undefined;
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      shifted = draft.arr.shift();
+    });
+
+    expect(shifted).toBeUndefined();
+    expect(undo).toHaveLength(0);
+    expect(redo).toHaveLength(0);
+  });
+
+  test("sort with undo/redo", () => {
+    const obj = { arr: [3, 1, 4, 1, 5] };
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      draft.arr.sort((a, b) => a - b);
+    });
+
+    expect(obj.arr).toEqual([1, 1, 3, 4, 5]);
+
+    applyPatches(obj, undo);
+    expect(obj.arr).toEqual([3, 1, 4, 1, 5]);
+
+    applyPatches(obj, redo);
+    expect(obj.arr).toEqual([1, 1, 3, 4, 5]);
+  });
+
+  test("reverse with undo/redo", () => {
+    const obj = { arr: [1, 2, 3, 4] };
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      draft.arr.reverse();
+    });
+
+    expect(obj.arr).toEqual([4, 3, 2, 1]);
+
+    applyPatches(obj, undo);
+    expect(obj.arr).toEqual([1, 2, 3, 4]);
+
+    applyPatches(obj, redo);
+    expect(obj.arr).toEqual([4, 3, 2, 1]);
+  });
+
+  test("sort with object references preserved", () => {
+    const a = { name: "c" };
+    const b = { name: "a" };
+    const c = { name: "b" };
+    const obj = { arr: [a, b, c] };
+
+    const [undo] = updateWithUndo(obj, (draft) => {
+      draft.arr.sort((x, y) => x.name.localeCompare(y.name));
+    });
+
+    expect(obj.arr).toEqual([b, c, a]);
+    expect(obj.arr[0]).toBe(b);
+    expect(obj.arr[1]).toBe(c);
+    expect(obj.arr[2]).toBe(a);
+
+    applyPatches(obj, undo);
+    expect(obj.arr[0]).toBe(a);
+    expect(obj.arr[1]).toBe(b);
+    expect(obj.arr[2]).toBe(c);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage: splice with insertions
+// ---------------------------------------------------------------------------
+
+describe("splice with insertions", () => {
+  test("splice replace: remove and insert", () => {
+    const obj = { arr: [1, 2, 3, 4, 5] };
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      draft.arr.splice(1, 2, 10, 20, 30);
+    });
+
+    expect(obj.arr).toEqual([1, 10, 20, 30, 4, 5]);
+
+    applyPatches(obj, undo);
+    expect(obj.arr).toEqual([1, 2, 3, 4, 5]);
+
+    applyPatches(obj, redo);
+    expect(obj.arr).toEqual([1, 10, 20, 30, 4, 5]);
+  });
+
+  test("splice insert only (deleteCount 0)", () => {
+    const obj = { arr: ["a", "b"] };
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      draft.arr.splice(1, 0, "x", "y");
+    });
+
+    expect(obj.arr).toEqual(["a", "x", "y", "b"]);
+
+    applyPatches(obj, undo);
+    expect(obj.arr).toEqual(["a", "b"]);
+
+    applyPatches(obj, redo);
+    expect(obj.arr).toEqual(["a", "x", "y", "b"]);
+  });
+
+  test("splice with negative start", () => {
+    const obj = { arr: [1, 2, 3, 4] };
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      draft.arr.splice(-2, 1, 99);
+    });
+
+    expect(obj.arr).toEqual([1, 2, 99, 4]);
+
+    applyPatches(obj, undo);
+    expect(obj.arr).toEqual([1, 2, 3, 4]);
+
+    applyPatches(obj, redo);
+    expect(obj.arr).toEqual([1, 2, 99, 4]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage: direct array length, delete, add
+// ---------------------------------------------------------------------------
+
+describe("direct array operations", () => {
+  test("truncate array by setting length", () => {
+    const obj = { arr: [1, 2, 3, 4, 5] };
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      draft.arr.length = 2;
+    });
+
+    expect(obj.arr).toEqual([1, 2]);
+
+    applyPatches(obj, undo);
+    expect(obj.arr).toEqual([1, 2, 3, 4, 5]);
+
+    applyPatches(obj, redo);
+    expect(obj.arr).toEqual([1, 2]);
+  });
+
+  test("delete array element by index", () => {
+    const obj = { arr: [10, 20, 30] };
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      delete draft.arr[1];
+    });
+
+    expect(1 in obj.arr).toBe(false);
+    expect(obj.arr.length).toBe(3); // length unchanged, creates hole
+
+    applyPatches(obj, undo);
+    expect(obj.arr[1]).toBe(20);
+
+    applyPatches(obj, redo);
+    expect(1 in obj.arr).toBe(false);
+  });
+
+  test("add new index beyond current length", () => {
+    const obj = { arr: [1, 2] };
+
+    const [undo, redo] = updateWithUndo(obj, (draft) => {
+      (draft as any).arr[5] = 99;
+    });
+
+    expect(obj.arr[5]).toBe(99);
+    expect(obj.arr.length).toBe(6);
+
+    applyPatches(obj, undo);
+    expect(5 in obj.arr).toBe(false);
+
+    applyPatches(obj, redo);
+    expect(obj.arr[5]).toBe(99);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage: Map/Set proxy methods not yet tested
+// ---------------------------------------------------------------------------
+
+describe("Map proxy: has and keys", () => {
+  test("has() works through proxy", () => {
+    const obj = { m: new Map([["a", 1], ["b", 2]]) };
+
+    updateWithUndo(obj, (draft) => {
+      expect(draft.m.has("a")).toBe(true);
+      expect(draft.m.has("z")).toBe(false);
+    });
+  });
+
+  test("keys() works through proxy", () => {
+    const obj = { m: new Map([["x", 1], ["y", 2]]) };
+
+    updateWithUndo(obj, (draft) => {
+      const keys = Array.from(draft.m.keys());
+      expect(keys).toEqual(["x", "y"]);
+    });
+  });
+});
+
+describe("Set proxy: has, keys, entries", () => {
+  test("has() works through proxy", () => {
+    const obj = { s: new Set([1, 2, 3]) };
+
+    updateWithUndo(obj, (draft) => {
+      expect(draft.s.has(2)).toBe(true);
+      expect(draft.s.has(99)).toBe(false);
+    });
+  });
+
+  test("keys() iterates through proxy", () => {
+    const a = { id: 1 };
+    const b = { id: 2 };
+    const obj = { s: new Set([a, b]) };
+
+    const [undo] = updateWithUndo(obj, (draft) => {
+      for (const item of draft.s.keys()) {
+        item.id += 10;
+      }
+    });
+
+    expect(a.id).toBe(11);
+    expect(b.id).toBe(12);
+
+    applyPatches(obj, undo);
+    expect(a.id).toBe(1);
+    expect(b.id).toBe(2);
+  });
+
+  test("entries() iterates through proxy", () => {
+    const x = { v: "a" };
+    const y = { v: "b" };
+    const obj = { s: new Set([x, y]) };
+
+    const [undo] = updateWithUndo(obj, (draft) => {
+      for (const [val] of draft.s.entries()) {
+        val.v = val.v.toUpperCase();
+      }
+    });
+
+    expect(x.v).toBe("A");
+    expect(y.v).toBe("B");
+
+    applyPatches(obj, undo);
+    expect(x.v).toBe("a");
+    expect(y.v).toBe("b");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage: applyPatches error
+// ---------------------------------------------------------------------------
+
+describe("applyPatches edge cases", () => {
+  test("throws on empty path", () => {
+    expect(() => {
+      applyPatches({}, [{ op: "replace", path: [], value: 1 }]);
+    }).toThrow("Cannot apply patch with empty path");
+  });
+});

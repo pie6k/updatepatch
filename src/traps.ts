@@ -242,7 +242,9 @@ function createArrayProxy<T>(
       const removed = target.splice(actualStart, actualDeleteCount, ...items);
       suppressTraps = false;
 
-      // Undo: recorded in reverse so global reversal yields correct order
+      // Undo: recorded so that after global reversal the application
+      // order is: remove inserted items back-to-front, then re-add
+      // removed items front-to-back.
       for (let i = removedRefs.length - 1; i >= 0; i--) {
         ctx.undoPatches.push({
           op: "add",
@@ -250,7 +252,7 @@ function createArrayProxy<T>(
           value: removedRefs[i],
         });
       }
-      for (let i = items.length - 1; i >= 0; i--) {
+      for (let i = 0; i < items.length; i++) {
         ctx.undoPatches.push({
           op: "remove",
           path: [...basePath, actualStart + i],
