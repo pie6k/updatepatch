@@ -131,7 +131,8 @@ type Recipe<T> = (draft: T) => void;
 
 ## Supported types
 
-- Plain objects and class instances (prototype preserved)
+- Plain objects
+- Custom class instances (prototype and identity preserved through undo/redo)
 - `accessor` keyword (auto-accessors with private backing fields)
 - Arrays — direct index access and methods: `push`, `pop`, `splice`, `shift`, `unshift`, `sort`, `reverse`
 - `Map` — `get`, `set`, `delete`, `clear`
